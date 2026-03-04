@@ -1,3 +1,5 @@
+![](bottlenose)
+
 BOTTLENOSE: The Official Manual
 The Story
 You are a bottlenose dolphin. You have been abducted by a group of well-meaning but incredibly misguided researchers who have partially flooded a suburban house to serve as a makeshift domestic marine biology and linguistics lab. They are trying to teach you English. You do not care about English. You care about the leftover mashed potatoes they cruelly ate in front of you three days ago. You know they hid the rest in a mini-fridge somewhere in this house. You must find them.
@@ -45,3 +47,4 @@ Know Your Enemy: The Intern is easily distracted and has weak dice rolls. The Le
 Mind Your Sanity: The Linguistics Researcher doesn't want to capture you physically; they want to force you to look at flashcards. Losing against them will drain your patience/sanity.
 
 Map It Out: The house layout doesn't change. Remember which rooms connect to the Hallway so you don't get cornered.
+
