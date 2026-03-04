@@ -1,4 +1,4 @@
-![](bottlenose)
+![](bottlenose.jpg)
 
 BOTTLENOSE: The Official Manual
 The Story
@@ -47,4 +47,5 @@ Know Your Enemy: The Intern is easily distracted and has weak dice rolls. The Le
 Mind Your Sanity: The Linguistics Researcher doesn't want to capture you physically; they want to force you to look at flashcards. Losing against them will drain your patience/sanity.
 
 Map It Out: The house layout doesn't change. Remember which rooms connect to the Hallway so you don't get cornered.
+
 
