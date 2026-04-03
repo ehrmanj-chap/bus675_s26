@@ -1,4 +1,5 @@
 # Lab 2 Submission README
+# Sorry it's not in the submission folder whoops
 
 ## Student Information
 - Name: Jordan Ehrman
