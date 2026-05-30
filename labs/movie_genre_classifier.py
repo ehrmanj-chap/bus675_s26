@@ -1,5 +1,5 @@
 """
-Lab 3 — Part A: Multimodal Movie Genre Classifier
+Lab 3 - Part A: Multimodal Movie Genre Classifier
 ==================================================
 Complete this file to build and train your multimodal neural network.
 How you structure the training script (entry point, argument handling, etc.)
@@ -22,40 +22,24 @@ from torchvision import transforms
 from tqdm import tqdm
 
 
-# =============================================================================
-# Constants — adjust these to control model complexity
-# =============================================================================
-
 GENRES = ["Animation", "Comedy", "Documentary", "Horror", "Romance", "Sci-Fi"]
 
 NUMERIC_COLS = ["runtime", "vote_average", "vote_count",
                 "release_year", "popularity", "budget", "revenue"]
 
-# Pipe-separated list fields — each gets its own embedding vocabulary
 LIST_FIELDS = ["cast", "directors", "writers", "production_companies"]
-
-# Single-value categorical fields
 SINGLE_CAT_FIELDS = ["mpaa_rating"]
 
-IMAGE_SIZE   = 128   # poster resize target (pixels)
-MAX_LIST_LEN = 20    # pad/truncate list fields to this many tokens
-TOP_N_VOCAB  = 50    # keep only top-N tokens per field by training frequency
-EMBED_DIM    = 32    # embedding dimension for all categorical fields
+IMAGE_SIZE   = 128
+MAX_LIST_LEN = 20
+TOP_N_VOCAB  = 50
+EMBED_DIM    = 32
 
-
-# =============================================================================
-# PROVIDED: VocabBuilder
-# =============================================================================
 
 class VocabBuilder:
     """
     Builds integer vocabularies for pipe-separated categorical fields.
-    Fit ONLY on training data — fitting on val/test is data leakage.
-
-    Token index conventions:
-        0 = <PAD>  — padding
-        1 = <UNK>  — unknown token (not in top-N at training time)
-        2+ = actual tokens, ordered by training frequency
+    Fit only on training data.
     """
 
     PAD_IDX = 0
@@ -118,10 +102,6 @@ class VocabBuilder:
         return vb
 
 
-# =============================================================================
-# PROVIDED: NumericScaler
-# =============================================================================
-
 class NumericScaler:
     """
     Standardises numeric features to zero mean, unit variance.
@@ -163,34 +143,21 @@ class NumericScaler:
         return ns
 
 
-# =============================================================================
-# YOUR CODE: Dataset
-# =============================================================================
-
 class MoviePosterDataset(Dataset):
     """
-    Loads a split (train / val / test) and returns one sample per film.
-
-    Each sample should contain:
-      - The poster image as a tensor
-      - The numeric features as a tensor
-      - Encoded list-field tensors (one per field in LIST_FIELDS)
-      - The MPAA rating as an integer index
-      - The genre label as an integer index
+    Loads a split and returns poster image, numeric features,
+    categorical fields, and genre label for one film.
     """
 
     def __init__(self, df, image_dir, vocab_builder, numeric_scaler,
                  transform=None):
-        # YOUR CODE HERE
-        # Hint: call numeric_scaler.transform(df) once here and store the result
-        # so you're not recomputing it on every __getitem__ call.
         self.df = df.reset_index(drop=True)
         self.image_dir = Path(image_dir)
         self.vocab_builder = vocab_builder
         self.numeric_scaler = numeric_scaler
         self.transform = transform
-        self.image_col = "image_path" 
-        self.label_col = "label" 
+        self.image_col = "image_path"
+        self.label_col = "label"
         self.genre_to_idx = {genre: idx for idx, genre in enumerate(GENRES)}
         numeric_dict = self.numeric_scaler.transform(self.df)
         self.numeric_matrix = np.stack(
@@ -199,7 +166,6 @@ class MoviePosterDataset(Dataset):
         ).astype(np.float32)
 
     def __len__(self):
-        # YOUR CODE HERE
         return len(self.df)
 
     def __getitem__(self, idx):
@@ -218,6 +184,7 @@ class MoviePosterDataset(Dataset):
         for field in SINGLE_CAT_FIELDS:
             encoded = self.vocab_builder.encode_single(row.get(field, ""), field)
             cat_fields[field] = torch.tensor(encoded, dtype=torch.long)
+
         label_name = row[self.label_col]
         label = torch.tensor(self.genre_to_idx[label_name], dtype=torch.long)
 
@@ -228,81 +195,52 @@ class MoviePosterDataset(Dataset):
             "label": label,
         }
 
-# =============================================================================
-# YOUR CODE: Image Branch
-# =============================================================================
-
-from torchvision import models
 
 class ImageBranch(nn.Module):
     """
-    Transfer learning image encoder: pretrained ResNet18 backbone
-    with a small trainable projection head.
-
-    The entire backbone is frozen by default (only the head trains).
-    Optionally, the last residual block (layer4) can be unfrozen for
-    fine-tuning once the head has converged.
-
-    ResNet18 architecture ends with:
-        ... -> layer4 -> AdaptiveAvgPool2d -> (512,) feature vector
-
-    We remove the original 1000-class classification head and replace
-    it with our own projection to out_dim.
+    Part A image encoder: a small custom CNN trained from scratch.
+    Input shape:  (batch, 3, IMAGE_SIZE, IMAGE_SIZE)
+    Output shape: (batch, out_dim)
     """
 
-    BACKBONE_OUT_DIM = 512  # ResNet18 feature dimension after global average pool
-
-    def __init__(self, out_dim=256, dropout=0.4, fine_tune=False):
+    def __init__(self, out_dim=256, dropout=0.4):
         super().__init__()
+        self.features = nn.Sequential(
+            nn.Conv2d(3, 32, kernel_size=3, padding=1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(2),
 
-        # Load ResNet18 with pretrained ImageNet weights
-        backbone = models.resnet18(weights=models.ResNet18_Weights.DEFAULT)
+            nn.Conv2d(32, 64, kernel_size=3, padding=1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(2),
 
-        # Freeze ALL backbone parameters — no gradient updates during training
-        for param in backbone.parameters():
-            param.requires_grad = False
+            nn.Conv2d(64, 128, kernel_size=3, padding=1),
+            nn.BatchNorm2d(128),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(2),
 
-        # (Optional fine-tuning) Unfreeze the last residual block
-        # This allows the deepest backbone layers to adapt to poster images.
-        # Only do this after the head has converged with frozen weights.
-        if fine_tune:
-            for param in backbone.layer4.parameters():
-                param.requires_grad = True
-
-        # Remove ResNet's original fully-connected classification head.
-        # list(backbone.children()) gives:
-        #   [conv1, bn1, relu, maxpool, layer1, layer2, layer3, layer4, avgpool, fc]
-        # We keep everything EXCEPT the last element (fc) by slicing [:-1]
-        self.backbone = nn.Sequential(*list(backbone.children())[:-1])
-        # Output of self.backbone: (batch, 512, 1, 1)
-
-        # Trainable projection head (this is what gets trained)
+            nn.Conv2d(128, 256, kernel_size=3, padding=1),
+            nn.BatchNorm2d(256),
+            nn.ReLU(inplace=True),
+            nn.AdaptiveAvgPool2d((1, 1)),
+        )
         self.head = nn.Sequential(
-            nn.Flatten(),             # (batch, 512, 1, 1) -> (batch, 512)
+            nn.Flatten(),
             nn.Dropout(dropout),
-            nn.Linear(self.BACKBONE_OUT_DIM, out_dim),
+            nn.Linear(256, out_dim),
             nn.ReLU(inplace=True),
         )
 
     def forward(self, x):
-        features = self.backbone(x)   # (batch, 512, 1, 1) — frozen
-        return self.head(features)    # (batch, out_dim)   — trained
+        features = self.features(x)
+        return self.head(features)
 
-
-
-# =============================================================================
-# YOUR CODE: Tabular Branch
-# =============================================================================
 
 class TabularBranch(nn.Module):
     """
     Takes numeric features and categorical embeddings and produces a feature vector.
-
-    Consider two sub-branches:
-      - Numeric: FC layers over the standardised numeric features
-      - Embedding: one nn.Embedding table per field, pool tokens -> concat -> FC
-
-    Then merge the two sub-branches into a single output vector.
     """
 
     def __init__(self, vocab_sizes, out_dim=256):
@@ -329,7 +267,6 @@ class TabularBranch(nn.Module):
         )
 
         cat_input_dim = max(len(self.all_cat_fields), 1) * EMBED_DIM
-
         self.cat_net = nn.Sequential(
             nn.Linear(cat_input_dim, 128),
             nn.ReLU(inplace=True),
@@ -343,22 +280,16 @@ class TabularBranch(nn.Module):
             nn.ReLU(inplace=True),
             nn.Dropout(0.3),
         )
-    def _mean_pool_list_embedding(self, token_ids, embedding_layer):
-        """
-        token_ids: (batch, MAX_LIST_LEN)
-        returns:  (batch, EMBED_DIM)
-        """
-        emb = embedding_layer(token_ids)  # (batch, length, EMBED_DIM)
 
+    def _mean_pool_list_embedding(self, token_ids, embedding_layer):
+        emb = embedding_layer(token_ids)
         mask = (token_ids != VocabBuilder.PAD_IDX).float().unsqueeze(-1)
         summed = (emb * mask).sum(dim=1)
         counts = mask.sum(dim=1).clamp(min=1.0)
-
         return summed / counts
-        
+
     def forward(self, numeric, cat_fields):
         numeric_features = self.numeric_net(numeric)
-
         pooled_embeddings = []
 
         for field in self.list_fields:
@@ -368,11 +299,10 @@ class TabularBranch(nn.Module):
 
         for field in self.single_cat_fields:
             token_ids = cat_fields[field]
-            emb = self.embeddings[field](token_ids)  # (batch, EMBED_DIM)
+            emb = self.embeddings[field](token_ids)
             pooled_embeddings.append(emb)
 
         if len(pooled_embeddings) == 0:
-            # Should not happen for this assignment, but keeps the model robust.
             batch_size = numeric.shape[0]
             cat_features_raw = torch.zeros(
                 batch_size,
@@ -385,22 +315,17 @@ class TabularBranch(nn.Module):
 
         cat_features = self.cat_net(cat_features_raw)
         merged = torch.cat([numeric_features, cat_features], dim=1)
-
         return self.merge(merged)
 
-# =============================================================================
-# YOUR CODE: Fusion Head
-# =============================================================================
 
 class FusionHead(nn.Module):
     """
     Concatenates image and tabular feature vectors and predicts genre.
-    Output: (batch, num_classes) logits (no softmax — use CrossEntropyLoss).
+    Output: (batch, num_classes) logits.
     """
 
     def __init__(self, image_dim, tabular_dim, num_classes=len(GENRES)):
         super().__init__()
-
         self.classifier = nn.Sequential(
             nn.Linear(image_dim + tabular_dim, 256),
             nn.ReLU(inplace=True),
@@ -412,19 +337,14 @@ class FusionHead(nn.Module):
         fused = torch.cat([image_features, tabular_features], dim=1)
         return self.classifier(fused)
 
-# =============================================================================
-# YOUR CODE: Full Model
-# =============================================================================
 
 class MultimodalGenreClassifier(nn.Module):
     """Wires ImageBranch, TabularBranch, and FusionHead together."""
 
     def __init__(self, vocab_sizes):
         super().__init__()
-
         image_dim = 256
         tabular_dim = 256
-
         self.image_branch = ImageBranch(out_dim=image_dim)
         self.tabular_branch = TabularBranch(vocab_sizes, out_dim=tabular_dim)
         self.fusion_head = FusionHead(
@@ -439,22 +359,6 @@ class MultimodalGenreClassifier(nn.Module):
         logits = self.fusion_head(image_features, tabular_features)
         return logits
 
-# =============================================================================
-# YOUR CODE: Training
-# =============================================================================
-# How you structure training is up to you.
-# Your script must:
-#   - Load the three manifest CSVs
-#   - Fit VocabBuilder and NumericScaler on the training set only
-#   - Build Datasets and DataLoaders for each split
-#   - Train for multiple epochs, reporting validation accuracy each epoch
-#   - Save the best model checkpoint
-#   - Print per-class accuracy on the test set at the end
-#
-# Device setup (works locally and on Colab GPU):
-#   device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-# rapidfire google-ai-mode helper tools, sorry lol 
 
 def move_batch_to_device(batch, device):
     image = batch["image"].to(device)
@@ -462,11 +366,15 @@ def move_batch_to_device(batch, device):
     cat_fields = {k: v.to(device) for k, v in batch["cat_fields"].items()}
     label = batch["label"].to(device)
     return image, numeric, cat_fields, label
+
+
 def accuracy_from_logits(logits, labels):
     preds = logits.argmax(dim=1)
     correct = (preds == labels).sum().item()
     total = labels.numel()
     return correct, total
+
+
 def train_one_epoch(model, loader, optimizer, criterion, device):
     model.train()
     running_loss = 0.0
@@ -486,6 +394,8 @@ def train_one_epoch(model, loader, optimizer, criterion, device):
     avg_loss = running_loss / max(running_total, 1)
     avg_acc = running_correct / max(running_total, 1)
     return avg_loss, avg_acc
+
+
 @torch.no_grad()
 def evaluate(model, loader, criterion, device, desc="Evaluating"):
     model.eval()
@@ -503,6 +413,8 @@ def evaluate(model, loader, criterion, device, desc="Evaluating"):
     avg_loss = running_loss / max(running_total, 1)
     avg_acc = running_correct / max(running_total, 1)
     return avg_loss, avg_acc
+
+
 @torch.no_grad()
 def per_class_accuracy(model, loader, device):
     model.eval()
